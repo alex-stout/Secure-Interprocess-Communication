@@ -1,0 +1,1 @@
+int encrypt(int arg);

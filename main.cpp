@@ -1,6 +1,7 @@
 #include <iostream>
 #include "encryption.hpp"
 #include "settings.hpp"
+#include "cstring"
 
 using namespace std;
 

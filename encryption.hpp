@@ -1,1 +1,1 @@
-int encrypt(int arg);
+int encrypt(int arg, int key);

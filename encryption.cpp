@@ -2,7 +2,7 @@
 
 using namespace std;
 
-int encrypt(int arg, int key)
+int XORCypher(int arg, int key)
 {
     return arg * arg;
 }

@@ -1,4 +1,7 @@
 #include <iostream>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <unistd.h>
 #include "encryption.hpp"
 #include "settings.hpp"
 #include "cstring"
@@ -16,9 +19,65 @@ int client()
 
 int server()
 {
+    // intialize the variables to hold the input values
+    int port;
+    string ip;
+    string outFile;
+    string key;
+
+    // socket variables
+    int sockfd;
+    sockaddr_in address;
+
     cout << "Running as server." << endl;
-    int serve_sock, client_sock, client_addr_size;
-    return 0;
+    cout << "------ SERVER SETUP -------" << endl;
+    cout << "Connect to IP address: ";
+    cin >> ip;
+    cout << endl
+         << "Port #: ";
+    cin >> port;
+    // if the port is outside the acceptable range, abort the program
+    if (port<9000 | port> 9999)
+    {
+        cout << "Port " << port << " out of range. Please refer to the README for acceptable port ranges." << endl;
+        exit(1);
+    }
+    cout << "Save file to (default stdout): ";
+    cin >> outFile;
+    cout << endl
+         << endl
+         << "Enter the encryption key: ";
+    cin >> key;
+
+    cout << "======= SETTINGS ======" << endl;
+    cout << "IP address: " << ip << endl;
+    cout << "Output: " << outFile << endl;
+    cout << "Encryption key: " << key << endl;
+
+    cout << "Setting up the socket..." << endl;
+
+    // create the fd for the socket
+    if ((sockfd = socket(AF_INET, SOCK_STREAM, 0)) == 0)
+    {
+        cout << "Setting up the socket failed." << endl;
+        exit(1);
+    };
+
+    address.sin_family = AF_INET;
+    address.sin_port = port;
+    address.sin_addr.s_addr = INADDR_ANY;
+
+    // bind the socket to the setting so that it can actually listen
+    if (bind(sockfd, (struct sockaddr *)&address, sizeof(address)) < 0)
+    {
+        cout << "There was a problem binding socket to port " << port << endl;
+        exit(1);
+    };
+
+    // listen on the bound socket and accept a maxiumum of 5 concurrent connections
+    listen(sockfd, 5);
+
+    close(sockfd);
 }
 
 // handle the intial setup
@@ -57,7 +116,6 @@ int main(int argc, char *argv[])
     else if (strcmp(argv[1], "server") == 0)
     {
         server();
-        system("md5 test.txt");
     }
     else
     {

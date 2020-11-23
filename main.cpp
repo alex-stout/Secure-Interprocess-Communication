@@ -9,7 +9,6 @@
 #include "encryption.hpp"
 #include "settings.hpp"
 #include "cstring"
-#include <bits/stdc++.h>
 #include <chrono>
 #include <math.h>
 using namespace std::chrono;
@@ -173,7 +172,7 @@ int server()
     cout << "Connect to IP address: ";
     cin >> ip;
     // check the ip to see if it's a valid IPv4 ip
-    if (inet_pton(AF_INET, "127.0.0.1", &servaddr.sin_addr.s_addr) <= 0)
+    if (inet_pton(AF_INET, ip.c_str(), &servaddr.sin_addr.s_addr) <= 0)
     {
         cout << "Hmmm this ip doesn't looks right." << endl;
         exit(1);
@@ -244,7 +243,7 @@ int server()
     read(new_socket, packetSize, sizeof(long));
     cout << "Setting the size of the packets to: " << (long)packetSize[0] << endl;
     FILE *fp;
-    fp = fopen(c_str(outFile), "w");
+    fp = fopen(outFile.c_str(), "w");
     u_int32_t pcktNum = 0;
     char buffer[packetSize[0]];
     memset(buffer, -1, sizeof(buffer));

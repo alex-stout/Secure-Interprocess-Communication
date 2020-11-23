@@ -6,6 +6,8 @@
 #include <unistd.h>
 #include <sys/stat.h>
 #include <algorithm>
+#include <thread>
+#include <functional>
 #include "encryption.hpp"
 #include "settings.hpp"
 #include "cstring"
@@ -20,6 +22,20 @@ using namespace std;
 
 // intialize global setting for verbosity as 0, if enabled it is set to 1
 int g_verbose = 0;
+const string encKey = "encryption";
+
+void thread_func(string const &message)
+{
+    cout << message << " from the thread!" << endl;
+}
+
+void xor_crypt(const string &key, char *data, int data_len)
+{
+    for (int i = 0; i < data_len; i++)
+    {
+        data[i] ^= key[i % key.size()];
+    }
+}
 
 int client()
 {
@@ -27,7 +43,7 @@ int client()
     auto start = high_resolution_clock::now();
     // get the file opeend and ready to send.
     FILE *inputFile;
-    inputFile = fopen("./bible.txt", "r");
+    inputFile = fopen("./testfile", "r");
     // make sure our cursor is at the start of the file
     fseek(inputFile, 0, SEEK_SET);
 
@@ -57,7 +73,7 @@ int client()
 
     // let's see if we can get the size of the file so that we can see if the buffer is set larger than the actual file
     struct stat sb;
-    if (stat("./bible.txt", &sb) == -1)
+    if (stat("./testfile", &sb) == -1)
     {
         cout << "Error running stats on file." << endl;
         exit(1);
@@ -68,7 +84,7 @@ int client()
     }
 
     // add one to the the input to account for our "end of packet" symbol which is a -1
-    long buffer_size = 5000000;
+    long buffer_size = 10;
     // now resize the buffer size to be the size of the file instead of what the user set
     if ((int)sb.st_size < buffer_size)
     {
@@ -88,20 +104,22 @@ int client()
         cout << "\033[1;33mWarning: You set a very large packet size. You might see a different number of packets on the server size because of TCP packet size limitation. You'll still get all the data though.\033[1;0m" << endl;
     }
     uint32_t packetNum = 0;
-    memset(buff, 0, sizeof(buff));
-    int size;
-    while ((size = fread(buff, sizeof(char), sizeof(buff), inputFile)) > 0)
+    cout << "Buffer size: " << sizeof(buff) << endl;
+    memset(buff, -1, sizeof(buff));
+    int readSize;
+    while ((readSize = fread(buff, sizeof(char), sizeof(buff), inputFile)) > 0)
     {
         // run the encryption on the buffer (opportunity for multithreading here)
         // for (int i = 0; i < sizeof(buff); i++)
         // {
         //     buff[i] = buff[i] ^ '5';
         // }
+        xor_crypt(encKey, buff, readSize);
         send(sock, buff, sizeof(buff), 0);
 
         // cout << "Sent encrypted packet #" << packetNum << " - encrypted as ";
         cout << "Sent encrypted packet #" << packetNum << endl;
-        cout << "Size of created packet: " << size << endl;
+
         // for (int i = 0; i < sizeof(buff); i++)
         // {
         //     if (sizeof(buff) == 2 && i == 2)
@@ -118,13 +136,13 @@ int client()
         // }
         // cout << endl;
         packetNum++;
-        memset(buff, 0, sizeof(buff));
+        memset(buff, -1, sizeof(buff));
     }
     fclose(inputFile);
 
     cout << "Send Success!" << endl;
     cout << "MD5:" << endl;
-    system("md5 ./bible.txt");
+    system("md5 ./testfile");
 
     auto stop = high_resolution_clock::now();
 
@@ -224,25 +242,36 @@ int server()
     fp = fopen("output.txt", "w");
     u_int32_t pcktNum = 0;
     char buffer[packetSize[0]];
-    memset(buffer, 0, sizeof(buffer));
+    memset(buffer, -1, sizeof(buffer));
+
     while (read(new_socket, buffer, sizeof(buffer)))
     {
         cout << "Rec packet #" << pcktNum << endl;
         int bufferSize = 0;
         for (int i = 0; i < sizeof(buffer); i++)
         {
-            if ((int)buffer[i] == 0)
+            if (pcktNum == 437118)
             {
-                cout << "Reached the breaking point" << endl;
+                cout << (int)buffer[i] << " ";
+            }
+            // if we get here, we know that the packet is incomplete so we set the termination point
+            if ((int)buffer[i] == -1)
+            {
+                cout << "I've reached the end of the line." << endl;
                 break;
             }
             bufferSize++;
         }
-
+        cout << endl;
+        if (pcktNum == 437118)
+        {
+            cout << "Buff size: " << bufferSize << endl;
+        }
+        xor_crypt(encKey, buffer, bufferSize);
         fwrite(&buffer, bufferSize, 1, fp);
         //memset(buffer, 0, sizeof(buffer));
         pcktNum++;
-        memset(buffer, 0, sizeof(buffer));
+        memset(buffer, -1, sizeof(buffer));
     }
     fclose(fp);
 
@@ -256,6 +285,9 @@ int server()
 // handle the intial setup
 int main(int argc, char *argv[])
 {
+    thread t(std::bind(thread_func, "Hello there,"));
+    t.join();
+    return 1;
 
     // check to see the number of args. It should be over 2 or 3
     if (argc <= 1)

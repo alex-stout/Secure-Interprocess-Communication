@@ -6,8 +6,6 @@
 #include <unistd.h>
 #include <sys/stat.h>
 #include <algorithm>
-#include <thread>
-#include <functional>
 #include "encryption.hpp"
 #include "settings.hpp"
 #include "cstring"
@@ -209,7 +207,13 @@ int server()
     // assign IP
     servaddr.sin_family = AF_INET;
     servaddr.sin_port = htons(port);
-    servaddr.sin_addr.s_addr = INADDR_ANY;
+    cout << "binding on port: " << port << endl;
+
+    if (inet_pton(AF_INET, "127.0.0.1", &servaddr.sin_addr.s_addr) <= 0)
+    {
+        cout << "Hmmm this ip doesn't looks right." << endl;
+        exit(1);
+    }
 
     // bind the socket to the setting so that it can actually listen
     bind(sockfd, (struct sockaddr *)&servaddr, sizeof(servaddr));
@@ -285,9 +289,6 @@ int server()
 // handle the intial setup
 int main(int argc, char *argv[])
 {
-    thread t(std::bind(thread_func, "Hello there,"));
-    t.join();
-    return 1;
 
     // check to see the number of args. It should be over 2 or 3
     if (argc <= 1)

@@ -1,13 +1,17 @@
 #include <iostream>
 #include <sys/socket.h>
+#include <inttypes.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <unistd.h>
+#include <sys/stat.h>
 #include "encryption.hpp"
 #include "settings.hpp"
 #include "cstring"
 
 using namespace std;
+
+// TO-DO: Multithread the encrypting and decrypting of the data. Most useful with large data files.
 
 // intialize global setting for verbosity as 0, if enabled it is set to 1
 int g_verbose = 0;
@@ -16,8 +20,7 @@ int client()
 {
     // get the file opeend and ready to send.
     FILE *inputFile;
-    char buff[1];
-    inputFile = fopen("./test.txt", "r");
+    inputFile = fopen("./sample.txt", "r");
     // make sure our cursor is at the start of the file
     fseek(inputFile, 0, SEEK_SET);
 
@@ -44,19 +47,70 @@ int client()
         cout << "Connection failed" << endl;
         exit(1);
     }
+
+    // let's see if we can get the size of the file so that we can see if the buffer is set larger than the actual file
+    struct stat sb;
+    if (stat("./sample.txt", &sb) == -1)
+    {
+        cout << "Error running stats on file." << endl;
+        exit(1);
+    }
+    else
+    {
+        cout << "File size: " << (long long)sb.st_size << endl;
+    }
+
+    // add one to the the input to account for our "end of packet" symbol which is a -1
+    long buffer_size = 10000;
+    // now resize the buffer size to be the size of the file instead of what the user set
+    if ((int)sb.st_size < buffer_size)
+    {
+        cout << "It look like the packet size that you set (" << buffer_size << ") was bigger than the actual size (" << sb.st_size << ") of the file." << endl;
+        buffer_size = (long)sb.st_size;
+    }
+
+    char buff[buffer_size];
+
+    cout << "Size of buffer: " << sizeof(buff) << endl;
+
+    // send to the server the size of the packets being sent
+    send(sock, &buffer_size, sizeof(long), 0);
+    uint32_t packetNum = 0;
+    memset(buff, 0, sizeof(buff));
     while (fread(buff, sizeof(buff), 1, inputFile) > 0)
     {
+        // run the encryption on the buffer (opportunity for multithreading here)
+        // for (int i = 0; i < sizeof(buff); i++)
+        // {
+        //     buff[i] = buff[i] ^ '5';
+        // }
         send(sock, buff, sizeof(buff), 0);
+
+        cout << "Sent encrypted packet #" << packetNum << " - encrypted as ";
+        for (int i = 0; i < sizeof(buff); i++)
+        {
+            if (i == 2)
+            {
+                cout << "...";
+                int backstep = 2;
+                if (sizeof(buff) == 3)
+                {
+                    backstep = 1;
+                }
+                i = sizeof(buff) - backstep;
+            }
+            cout << hex << (int)buff[i] << dec;
+        }
+        cout << endl;
+        packetNum++;
     }
 
     fclose(inputFile);
 
-    // apply XOR cypher encryption to the data
-    data[0] = data[0] ^ 'w';
-    cout << sizeof(data) << endl;
-    cout << "Cyphered data: " << hex << (int)data[0] << endl;
-    send(sock, data, sizeof(data), 0);
-    cout << "Running as client." << endl;
+    cout << "Send Success!" << endl;
+    cout << "MD5:" << endl;
+    system("md5 ./sample.txt");
+
     return 0;
 }
 
@@ -67,8 +121,6 @@ int server()
     string ip;
     string outFile;
     string key;
-    char buffer[10];
-    cout << "charsize: " << sizeof(buffer) << endl;
 
     // socket variables
     int sockfd, new_socket;
@@ -139,12 +191,31 @@ int server()
         cout << "Server accept failed." << endl;
         exit(1);
     }
-    while (read(new_socket, buffer, 1))
+    long packetSize[1] = {0};
+    // get the packet size from the client
+    read(new_socket, packetSize, sizeof(long));
+    cout << "Setting the size of the packets to: " << (long)packetSize[0] << endl;
+    FILE *fp;
+    fp = fopen("output.txt", "w");
+    u_int32_t pcktNum = 0;
+    char buffer[packetSize[0]];
+    memset(buffer, 0, sizeof(buffer));
+    while (read(new_socket, buffer, sizeof(buffer)))
     {
-        cout << buffer[0] << endl;
+        cout << "Rec packet #" << pcktNum << endl;
+        // for (int i = 0; i < sizeof(buffer); i++)
+        // {
+        //     buffer[i] = buffer[i] ^ '5';
+        // }
+        fwrite(&buffer, sizeof(buffer), 1, fp);
+        memset(buffer, 0, sizeof(buffer));
+        pcktNum++;
     }
+    fclose(fp);
 
     close(sockfd);
+
+    system("md5 ./output.txt");
 
     return 0;
 }
@@ -152,7 +223,6 @@ int server()
 // handle the intial setup
 int main(int argc, char *argv[])
 {
-    cout << "number of args " << argc << endl;
     // check to see the number of args. It should be over 2 or 3
     if (argc <= 1)
     {
@@ -168,7 +238,6 @@ int main(int argc, char *argv[])
         if (strcmp(argv[2], "-v") == 0 | strcmp(argv[2], "--verbose") == 0)
         {
             g_verbose = 1;
-            exit(1);
         }
         else
         {

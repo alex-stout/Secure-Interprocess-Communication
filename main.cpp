@@ -9,7 +9,7 @@
 #include "encryption.hpp"
 #include "settings.hpp"
 #include "cstring"
-
+#include <bits/stdc++.h>
 #include <chrono>
 #include <math.h>
 using namespace std::chrono;
@@ -49,7 +49,7 @@ int client()
     int port = 9500;
     int sock = 0, valread;
     struct sockaddr_in serv_addr;
-    char data[1] = {'L'};
+
     if ((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0)
     {
         cout << "There was a problem creating the socket." << endl;
@@ -171,10 +171,17 @@ int server()
     cout << "Running as server." << endl;
     cout << "------ SERVER SETUP -------" << endl;
     cout << "Connect to IP address: ";
-    //cin >> ip;
+    cin >> ip;
+    // check the ip to see if it's a valid IPv4 ip
+    if (inet_pton(AF_INET, "127.0.0.1", &servaddr.sin_addr.s_addr) <= 0)
+    {
+        cout << "Hmmm this ip doesn't looks right." << endl;
+        exit(1);
+    }
+
     cout << endl
          << "Port #: ";
-    //cin >> port;
+    cin >> port;
     // if the port is outside the acceptable range, abort the program
     if (port<9000 | port> 9999)
     {
@@ -182,11 +189,11 @@ int server()
         exit(1);
     }
     cout << "Save file to (default stdout): ";
-    //cin >> outFile;
+    cin >> outFile;
     cout << endl
          << endl
          << "Enter the encryption key: ";
-    //cin >> key;
+    cin >> key;
 
     cout << "======= SETTINGS ======" << endl;
     cout << "IP address: " << ip << endl;
@@ -208,12 +215,6 @@ int server()
     servaddr.sin_family = AF_INET;
     servaddr.sin_port = htons(port);
     cout << "binding on port: " << port << endl;
-
-    if (inet_pton(AF_INET, "127.0.0.1", &servaddr.sin_addr.s_addr) <= 0)
-    {
-        cout << "Hmmm this ip doesn't looks right." << endl;
-        exit(1);
-    }
 
     // bind the socket to the setting so that it can actually listen
     bind(sockfd, (struct sockaddr *)&servaddr, sizeof(servaddr));
@@ -243,7 +244,7 @@ int server()
     read(new_socket, packetSize, sizeof(long));
     cout << "Setting the size of the packets to: " << (long)packetSize[0] << endl;
     FILE *fp;
-    fp = fopen("output.txt", "w");
+    fp = fopen(c_str(outFile), "w");
     u_int32_t pcktNum = 0;
     char buffer[packetSize[0]];
     memset(buffer, -1, sizeof(buffer));
@@ -271,7 +272,7 @@ int server()
         {
             cout << "Buff size: " << bufferSize << endl;
         }
-        xor_crypt(encKey, buffer, bufferSize);
+        xor_crypt(key, buffer, bufferSize);
         fwrite(&buffer, bufferSize, 1, fp);
         //memset(buffer, 0, sizeof(buffer));
         pcktNum++;

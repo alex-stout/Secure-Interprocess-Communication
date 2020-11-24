@@ -234,7 +234,6 @@ int client()
     }
     uint32_t packetNum = 0;
     cout << "Buffer size: " << sizeof(buff) << endl;
-    bzero(buff, sizeof(buff));
     unsigned long readSize;
     while ((readSize = (unsigned long)fread(buff, sizeof(char), sizeof(buff) - sizeof(long), inputFile)) > 0)
     {
@@ -249,10 +248,9 @@ int client()
         // send the data over the socket
         send(sock, buff, sizeof(buff), 0);
         // print out the sent packet
-        cout << "Sent encrypted packet #" << packetNum << endl;
+        cout << "Sent encrypted packet #" << packetNum << " - Size: " << end.value << endl;
 
         packetNum++;
-        bzero(buff, sizeof(buff));
     }
     fclose(inputFile);
 
@@ -340,7 +338,6 @@ int server()
     fp = fopen(outFile.c_str(), "w");
     u_int32_t pcktNum = 0;
     char buffer[packetSize[0]];
-    bzero(buffer, sizeof(buffer));
 
     while (read(new_socket, buffer, sizeof(buffer)))
     {
@@ -360,9 +357,6 @@ int server()
 
         // increment the packet counter
         pcktNum++;
-
-        // reset the buffer to be zero to enable the testing of the next packet end
-        bzero(buffer, sizeof(buffer));
     }
     fclose(fp);
 
@@ -376,6 +370,7 @@ int server()
 // handle the intial setup
 int main(int argc, char *argv[])
 {
+    cout << sizeof(unsigned long) << endl;
 
     // check to see the number of args. It should be over 2 or 3
     if (argc <= 1)

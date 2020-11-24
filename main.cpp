@@ -15,15 +15,49 @@ using namespace std::chrono;
 
 using namespace std;
 
+// macro to help find the right system call for md5
+string getOsName()
+{
+#ifdef _WIN32
+    return "Windows 32-bit";
+#elif _WIN64
+    return "Windows 64-bit";
+#elif __APPLE__ || __MACH__
+    return "Mac OSX";
+#elif __linux__
+    return "Linux";
+#elif __FreeBSD__
+    return "FreeBSD";
+#elif __unix || __unix__
+    return "Unix";
+#else
+    return "Other";
+#endif
+}
+
 // TO-DO: Multithread the encrypting and decrypting of the data. Most useful with large data files.
 
 // intialize global setting for verbosity as 0, if enabled it is set to 1
 int g_verbose = 0;
 const string encKey = "encryption";
 
-void thread_func(string const &message)
+void run_md5(string filename)
 {
-    cout << message << " from the thread!" << endl;
+    string call;
+    string OS = getOsName();
+    if (strcmp(OS.c_str(), "Mac OSX") == 0)
+    {
+        // we're running on a mac
+        call = "md5 ";
+    }
+    else if (strcmp(OS.c_str(), "Linux") == 0)
+    {
+        call = "md5sum ";
+    }
+
+    call += filename;
+
+    system(call.c_str());
 }
 
 void xor_crypt(const string &key, char *data, int data_len)
@@ -34,34 +68,126 @@ void xor_crypt(const string &key, char *data, int data_len)
     }
 }
 
+void get_user_input(string &key, string &ip, int &port, string &file, int &pcktSize, int type = 0)
+{
+    cout << "Connect to IP address: ";
+    cin >> ip;
+
+    cout << "Port: ";
+    cin >> port;
+    // make sure that the port is within the allowable range
+    if (port<9000 | port> 9999)
+    {
+        cout << "Port " << port << " out of range. Please refer to the README for acceptable port ranges." << endl;
+        exit(1);
+    }
+
+    // tailor the output to the type of program being executed (server or client)
+    if (type == 1)
+    {
+        cout << "Save file to: ";
+    }
+    else
+    {
+        cout << "File to be sent: ";
+    }
+
+    cin >> file;
+
+    if (type == 0)
+    {
+        cout << "Pkt size: ";
+        cin >> pcktSize;
+    }
+
+    cout << "Enter encryption key: ";
+    cin >> key;
+}
+
+void print_packet(char *buffer, int size, int packetNum, int type = 0)
+{
+    // type 1 for server and 0 for client
+    if (type == 1)
+    {
+        cout << "Sent ";
+    }
+    else
+    {
+        cout << "Rec ";
+    }
+    cout << "packet #" << packetNum << " - encrypted as ";
+
+    if (size <= 4)
+    {
+        for (int i = 0; i < size; i++)
+        {
+            cout << hex << buffer[i] << dec;
+        }
+        cout << endl;
+    }
+    else
+    {
+        cout << hex << buffer[0] << buffer[1] << dec << "..." << hex << buffer[size - 2] << buffer[size - 1] << dec;
+    }
+}
+
+void print_settings(string &key, sockaddr_in &servaddr, int &port, string &file, int &pcktSize, int type = 0)
+{
+    cout << "=====SETTINGS=====" << endl;
+    cout << "IP: " << servaddr.sin_addr.s_addr << endl;
+    cout << "Port: " << port << endl;
+    cout << "File: " << file << endl;
+    if (type == 0)
+    {
+        cout << "Packet Size: " << pcktSize << endl;
+    }
+
+    cout << "Encryption key: " << key << endl;
+}
+
 int client()
 {
+    int port;
+    int pcktSize;
+    string ip;
+    string inFile;
+    string key;
+
+    // socket variables
+    int sockfd;
+    struct sockaddr_in serv_addr;
+    get_user_input(key, ip, port, inFile, pcktSize);
+    print_settings(key, serv_addr, port, inFile, pcktSize);
     // start the timing
     auto start = high_resolution_clock::now();
     // get the file opeend and ready to send.
     FILE *inputFile;
-    inputFile = fopen("./testfile", "r");
+    inputFile = fopen(inFile.c_str(), "r");
+    if (inputFile == NULL)
+    {
+        cout << "\033[1;31mError opening the file: " << inFile << "\033[1;0m" << endl;
+        return 1;
+    }
     // make sure our cursor is at the start of the file
     fseek(inputFile, 0, SEEK_SET);
 
     // hardcode the port for now... will set this later in the settings
-    int port = 9500;
+
     int sock = 0, valread;
-    struct sockaddr_in serv_addr;
+    serv_addr.sin_family = AF_INET;
+    serv_addr.sin_port = htons(port);
+    if (inet_pton(AF_INET, ip.c_str(), &serv_addr.sin_addr) <= 0)
+    {
+        cout << "Hmmm this ip doesn't looks right." << endl;
+        exit(1);
+    }
 
     if ((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0)
     {
         cout << "There was a problem creating the socket." << endl;
         exit(1);
     }
-    serv_addr.sin_family = AF_INET;
-    serv_addr.sin_port = htons(port);
 
-    if (inet_pton(AF_INET, "127.0.0.1", &serv_addr.sin_addr) <= 0)
-    {
-        cout << "Hmmm this ip doesn't looks right." << endl;
-        exit(1);
-    }
     if (connect(sock, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0)
     {
         cout << "Connection failed" << endl;
@@ -106,32 +232,13 @@ int client()
     int readSize;
     while ((readSize = fread(buff, sizeof(char), sizeof(buff), inputFile)) > 0)
     {
-        // run the encryption on the buffer (opportunity for multithreading here)
-        // for (int i = 0; i < sizeof(buff); i++)
-        // {
-        //     buff[i] = buff[i] ^ '5';
-        // }
-        xor_crypt(encKey, buff, readSize);
+        // run the encryption on the buffer
+        xor_crypt(key, buff, readSize);
+        // send the data over the socket
         send(sock, buff, sizeof(buff), 0);
-
-        // cout << "Sent encrypted packet #" << packetNum << " - encrypted as ";
+        // print out the sent packet
         cout << "Sent encrypted packet #" << packetNum << endl;
 
-        // for (int i = 0; i < sizeof(buff); i++)
-        // {
-        //     if (sizeof(buff) == 2 && i == 2)
-        //     {
-        //         cout << "...";
-        //         int backstep = 2;
-        //         if (sizeof(buff) == 3)
-        //         {
-        //             backstep = 1;
-        //         }
-        //         i = sizeof(buff) - backstep;
-        //     }
-        //     cout << buff[i];
-        // }
-        // cout << endl;
         packetNum++;
         memset(buff, -1, sizeof(buff));
     }
@@ -139,7 +246,7 @@ int client()
 
     cout << "Send Success!" << endl;
     cout << "MD5:" << endl;
-    system("md5 ./testfile");
+    run_md5(inFile);
 
     auto stop = high_resolution_clock::now();
 
@@ -157,53 +264,32 @@ int client()
 int server()
 {
     // intialize the variables to hold the input values
-    int port = 9500;
+    int port;
     string ip;
     string outFile;
     string key;
+    int placeholder;
 
     // socket variables
-    int sockfd, new_socket;
+    int sockfd,
+        new_socket;
     socklen_t len;
     struct sockaddr_in servaddr, cliaddr, valread;
 
     cout << "Running as server." << endl;
-    cout << "------ SERVER SETUP -------" << endl;
-    cout << "Connect to IP address: ";
-    cin >> ip;
-    // check the ip to see if it's a valid IPv4 ip
-    if (inet_pton(AF_INET, ip.c_str(), &servaddr.sin_addr.s_addr) <= 0)
-    {
-        cout << "Hmmm this ip doesn't looks right." << endl;
-        exit(1);
-    }
-
-    cout << endl
-         << "Port #: ";
-    cin >> port;
-    // if the port is outside the acceptable range, abort the program
-    if (port<9000 | port> 9999)
-    {
-        cout << "Port " << port << " out of range. Please refer to the README for acceptable port ranges." << endl;
-        exit(1);
-    }
-    cout << "Save file to (default stdout): ";
-    cin >> outFile;
-    cout << endl
-         << endl
-         << "Enter the encryption key: ";
-    cin >> key;
-
-    cout << "======= SETTINGS ======" << endl;
-    cout << "IP address: " << ip << endl;
-    cout << "Output: " << outFile << endl;
-    cout << "Encryption key: " << key << endl;
+    get_user_input(key, ip, port, outFile, placeholder, 1);
+    print_settings(key, servaddr, port, outFile, placeholder, 1);
 
     cout << "Setting up the socket..." << endl;
 
     // create the fd for the socket
     sockfd = socket(AF_INET, SOCK_STREAM, 0);
-
+    // test IP address to make sure it's vaid
+    if (inet_pton(AF_INET, ip.c_str(), &servaddr.sin_addr) <= 0)
+    {
+        cout << "Hmmm this ip doesn't looks right." << endl;
+        exit(1);
+    }
     if (sockfd < 0)
     {
         cout << "Setting up the socket failed." << endl;
@@ -254,10 +340,6 @@ int server()
         int bufferSize = 0;
         for (int i = 0; i < sizeof(buffer); i++)
         {
-            if (pcktNum == 437118)
-            {
-                cout << (int)buffer[i] << " ";
-            }
             // if we get here, we know that the packet is incomplete so we set the termination point
             if ((int)buffer[i] == -1)
             {
@@ -271,17 +353,24 @@ int server()
         {
             cout << "Buff size: " << bufferSize << endl;
         }
+
+        // encrypt the buffer with the key
         xor_crypt(key, buffer, bufferSize);
+
+        // write the buffer to the file
         fwrite(&buffer, bufferSize, 1, fp);
-        //memset(buffer, 0, sizeof(buffer));
+
+        // increment the packet counter
         pcktNum++;
+
+        // reset the buffer to be zero to enable the testing of the next packet end
         memset(buffer, -1, sizeof(buffer));
     }
     fclose(fp);
 
     close(sockfd);
 
-    system("md5 ./output.txt");
+    run_md5(outFile);
 
     return 0;
 }
@@ -289,6 +378,7 @@ int server()
 // handle the intial setup
 int main(int argc, char *argv[])
 {
+    run_md5("output.txt");
 
     // check to see the number of args. It should be over 2 or 3
     if (argc <= 1)

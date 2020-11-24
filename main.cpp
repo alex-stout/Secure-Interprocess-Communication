@@ -36,10 +36,14 @@ string getOsName()
 }
 
 // TO-DO: Multithread the encrypting and decrypting of the data. Most useful with large data files.
+union packetCap
+{
+    unsigned long value;
+    unsigned char bytes[sizeof(unsigned long)];
+};
 
 // intialize global setting for verbosity as 0, if enabled it is set to 1
 int g_verbose = 0;
-const string encKey = "encryption";
 
 void run_md5(string filename)
 {
@@ -66,9 +70,10 @@ void xor_crypt(const string &key, char *data, int data_len)
     {
         data[i] ^= key[i % key.size()];
     }
+    cout << endl;
 }
 
-void get_user_input(string &key, string &ip, int &port, string &file, int &pcktSize, int type = 0)
+void get_user_input(string &key, string &ip, int &port, string &file, unsigned long &pcktSize, int type = 0)
 {
     cout << "Connect to IP address: ";
     cin >> ip;
@@ -76,11 +81,11 @@ void get_user_input(string &key, string &ip, int &port, string &file, int &pcktS
     cout << "Port: ";
     cin >> port;
     // make sure that the port is within the allowable range
-    if (port<9000 | port> 9999)
-    {
-        cout << "Port " << port << " out of range. Please refer to the README for acceptable port ranges." << endl;
-        exit(1);
-    }
+    // if (port<9000 | port> 9999)
+    // {
+    //     cout << "Port " << port << " out of range. Please refer to the README for acceptable port ranges." << endl;
+    //     exit(1);
+    // }
 
     // tailor the output to the type of program being executed (server or client)
     if (type == 1)
@@ -131,7 +136,7 @@ void print_packet(char *buffer, int size, int packetNum, int type = 0)
     }
 }
 
-void print_settings(string &key, sockaddr_in &servaddr, int &port, string &file, int &pcktSize, int type = 0)
+void print_settings(string &key, sockaddr_in &servaddr, int &port, string &file, unsigned long &pcktSize, int type = 0)
 {
     cout << "=====SETTINGS=====" << endl;
     cout << "IP: " << servaddr.sin_addr.s_addr << endl;
@@ -148,7 +153,7 @@ void print_settings(string &key, sockaddr_in &servaddr, int &port, string &file,
 int client()
 {
     int port;
-    int pcktSize;
+    unsigned long pcktSize;
     string ip;
     string inFile;
     string key;
@@ -196,7 +201,7 @@ int client()
 
     // let's see if we can get the size of the file so that we can see if the buffer is set larger than the actual file
     struct stat sb;
-    if (stat("./testfile", &sb) == -1)
+    if (stat(inFile.c_str(), &sb) == -1)
     {
         cout << "Error running stats on file." << endl;
         exit(1);
@@ -207,20 +212,21 @@ int client()
     }
 
     // add one to the the input to account for our "end of packet" symbol which is a -1
-    long buffer_size = 10;
+    unsigned long buffer_size = pcktSize;
     // now resize the buffer size to be the size of the file instead of what the user set
-    if ((int)sb.st_size < buffer_size)
+    if ((unsigned long)sb.st_size < buffer_size)
     {
         cout << "It look like the packet size that you set (" << buffer_size << ") was bigger than the actual size (" << sb.st_size << ") of the file." << endl;
         buffer_size = (long)sb.st_size;
     }
 
-    char buff[buffer_size];
+    char buff[buffer_size + sizeof(unsigned long)];
 
     cout << "Size of buffer: " << sizeof(buff) << endl;
 
+    unsigned long setPctSize = (unsigned long)sizeof(buff);
     // send to the server the size of the packets being sent
-    send(sock, &buffer_size, sizeof(long), 0);
+    send(sock, &setPctSize, sizeof(unsigned long), 0);
     cout << "I'm gonna send " << sb.st_size / buffer_size << " packets over." << endl;
     if (buffer_size > 65535)
     {
@@ -228,24 +234,29 @@ int client()
     }
     uint32_t packetNum = 0;
     cout << "Buffer size: " << sizeof(buff) << endl;
-    memset(buff, -1, sizeof(buff));
-    int readSize;
-    while ((readSize = fread(buff, sizeof(char), sizeof(buff), inputFile)) > 0)
+    bzero(buff, sizeof(buff));
+    unsigned long readSize;
+    while ((readSize = (unsigned long)fread(buff, sizeof(char), sizeof(buff) - sizeof(long), inputFile)) > 0)
     {
-        // run the encryption on the buffer
+        // run the encryption on the buffer (this only needs to happen on the actual data that's read in so we set the size to be the size fo the read data)
         xor_crypt(key, buff, readSize);
+        packetCap end;
+        end.value = readSize;
+        for (int i = 0; i < sizeof(unsigned long); i++)
+        {
+            buff[sizeof(buff) - i - 1] = end.bytes[i];
+        }
         // send the data over the socket
         send(sock, buff, sizeof(buff), 0);
         // print out the sent packet
         cout << "Sent encrypted packet #" << packetNum << endl;
 
         packetNum++;
-        memset(buff, -1, sizeof(buff));
+        bzero(buff, sizeof(buff));
     }
     fclose(inputFile);
 
     cout << "Send Success!" << endl;
-    cout << "MD5:" << endl;
     run_md5(inFile);
 
     auto stop = high_resolution_clock::now();
@@ -268,7 +279,7 @@ int server()
     string ip;
     string outFile;
     string key;
-    int placeholder;
+    unsigned long placeholder;
 
     // socket variables
     int sockfd,
@@ -305,11 +316,6 @@ int server()
 
     // bind the socket to the setting so that it can actually listen
     bind(sockfd, (struct sockaddr *)&servaddr, sizeof(servaddr));
-    // if (bindI != 0)
-    // {
-    //     cout << "There was a problem binding socket to port " << port << endl;
-    //     exit(1);
-    // };
 
     // listen on the bound socket and accept a maxiumum of 5 concurrent connections
     if ((listen(sockfd, 5)) < 0)
@@ -326,47 +332,37 @@ int server()
         cout << "Server accept failed." << endl;
         exit(1);
     }
-    long packetSize[1] = {0};
+    unsigned long packetSize[1] = {0};
     // get the packet size from the client
-    read(new_socket, packetSize, sizeof(long));
+    read(new_socket, packetSize, sizeof(unsigned long));
     cout << "Setting the size of the packets to: " << (long)packetSize[0] << endl;
     FILE *fp;
     fp = fopen(outFile.c_str(), "w");
     u_int32_t pcktNum = 0;
     char buffer[packetSize[0]];
-    memset(buffer, -1, sizeof(buffer));
+    bzero(buffer, sizeof(buffer));
 
     while (read(new_socket, buffer, sizeof(buffer)))
     {
-        cout << "Rec packet #" << pcktNum << endl;
-        int bufferSize = 0;
-        for (int i = 0; i < sizeof(buffer); i++)
+        packetCap output;
+        // populate the union with the data
+        for (int i = 0; i < sizeof(unsigned long); i++)
         {
-            // if we get here, we know that the packet is incomplete so we set the termination point
-            if ((int)buffer[i] == -1)
-            {
-                cout << "I've reached the end of the line." << endl;
-                break;
-            }
-            bufferSize++;
+            output.bytes[i] = buffer[sizeof(buffer) - i - 1];
         }
-        cout << endl;
-        if (pcktNum == 437118)
-        {
-            cout << "Buff size: " << bufferSize << endl;
-        }
+
+        cout << "Rec packet #" << pcktNum << " - Size: " << output.value << endl;
 
         // encrypt the buffer with the key
-        xor_crypt(key, buffer, bufferSize);
-
+        xor_crypt(key, buffer, output.value);
         // write the buffer to the file
-        fwrite(&buffer, bufferSize, 1, fp);
+        fwrite(&buffer, output.value, 1, fp);
 
         // increment the packet counter
         pcktNum++;
 
         // reset the buffer to be zero to enable the testing of the next packet end
-        memset(buffer, -1, sizeof(buffer));
+        bzero(buffer, sizeof(buffer));
     }
     fclose(fp);
 
@@ -380,7 +376,6 @@ int server()
 // handle the intial setup
 int main(int argc, char *argv[])
 {
-    run_md5("output.txt");
 
     // check to see the number of args. It should be over 2 or 3
     if (argc <= 1)

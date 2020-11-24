@@ -176,12 +176,11 @@ int client()
     int sock = 0, valread;
     serv_addr.sin_family = AF_INET;
     serv_addr.sin_port = htons(port);
-    serv_addr.sin_addr.s_addr = INADDR_ANY;
-    // if (inet_pton(AF_INET, ip.c_str(), &serv_addr.sin_addr) <= 0)
-    // {
-    //     cout << "Hmmm this ip doesn't looks right." << endl;
-    //     exit(1);
-    // }
+    if (inet_pton(AF_INET, ip.c_str(), &serv_addr.sin_addr) <= 0)
+    {
+        cout << "Hmmm this ip doesn't looks right." << endl;
+        exit(1);
+    }
 
     if ((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0)
     {
@@ -286,11 +285,11 @@ int server()
     // create the fd for the socket
     sockfd = socket(AF_INET, SOCK_STREAM, 0);
     // test IP address to make sure it's vaid
-    if (inet_pton(AF_INET, ip.c_str(), &servaddr.sin_addr) <= 0)
-    {
-        cout << "Hmmm this ip doesn't looks right." << endl;
-        exit(1);
-    }
+    // if (inet_pton(AF_INET, ip.c_str(), &servaddr.sin_addr) <= 0)
+    // {
+    //     cout << "Hmmm this ip doesn't looks right." << endl;
+    //     exit(1);
+    // }
     if (sockfd < 0)
     {
         cout << "Setting up the socket failed." << endl;
@@ -300,6 +299,8 @@ int server()
     // assign IP
     servaddr.sin_family = AF_INET;
     servaddr.sin_port = htons(port);
+
+    servaddr.sin_addr.s_addr = INADDR_ANY;
     cout << "binding on port: " << port << endl;
 
     // bind the socket to the setting so that it can actually listen

@@ -176,11 +176,12 @@ int client()
     int sock = 0, valread;
     serv_addr.sin_family = AF_INET;
     serv_addr.sin_port = htons(port);
-    if (inet_pton(AF_INET, ip.c_str(), &serv_addr.sin_addr) <= 0)
-    {
-        cout << "Hmmm this ip doesn't looks right." << endl;
-        exit(1);
-    }
+    serv_addr.sin_addr.s_addr = INADDR_ANY;
+    // if (inet_pton(AF_INET, ip.c_str(), &serv_addr.sin_addr) <= 0)
+    // {
+    //     cout << "Hmmm this ip doesn't looks right." << endl;
+    //     exit(1);
+    // }
 
     if ((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0)
     {

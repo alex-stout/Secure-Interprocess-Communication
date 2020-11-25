@@ -1,17 +1,10 @@
 #include <iostream>
+#include <string>
 #include <sys/socket.h>
-#include <inttypes.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <sys/stat.h>
-#include <algorithm>
-#include "encryption.hpp"
-#include "settings.hpp"
-#include "cstring"
-#include <chrono>
-#include <math.h>
-using namespace std::chrono;
 
 using namespace std;
 
@@ -35,7 +28,7 @@ string getOsName()
 #endif
 }
 
-// TO-DO: Multithread the encrypting and decrypting of the data. Most useful with large data files.
+// this union aids in the "packetizing" of the packet metadata required by the protocol
 union packetCap
 {
     unsigned long value;
@@ -45,13 +38,13 @@ union packetCap
 // intialize global setting for verbosity as 0, if enabled it is set to 1
 int g_verbose = 0;
 
+// run the md5 sommand based on the system executing the program (Linux & Mac Supported)
 void run_md5(string filename)
 {
     string call;
     string OS = getOsName();
     if (strcmp(OS.c_str(), "Mac OSX") == 0)
     {
-        // we're running on a mac
         call = "md5 ";
     }
     else if (strcmp(OS.c_str(), "Linux") == 0)
@@ -64,15 +57,18 @@ void run_md5(string filename)
     system(call.c_str());
 }
 
-void xor_crypt(const string &key, char *data, int data_len)
+// Future improvement: Multithread the encrypting and decrypting of the data. Most useful with large size packets.
+// XOR encryption based on a string key applied to an array of characters
+void xor_crypt(const string &key, char *data, int size)
 {
-    for (int i = 0; i < data_len; i++)
+    for (int i = 0; i < size; i++)
     {
         data[i] ^= key[i % key.size()];
     }
     cout << endl;
 }
 
+// function to help interacting with the user. Type is the client/server, default (client) is 0. Set 1 for server mode
 void get_user_input(string &key, string &ip, int &port, string &file, unsigned long &pcktSize, int type = 0)
 {
     cout << "Connect to IP address: ";
@@ -80,78 +76,69 @@ void get_user_input(string &key, string &ip, int &port, string &file, unsigned l
 
     cout << "Port: ";
     cin >> port;
-    // make sure that the port is within the allowable range
-    // if (port<9000 | port> 9999)
-    // {
-    //     cout << "Port " << port << " out of range. Please refer to the README for acceptable port ranges." << endl;
-    //     exit(1);
-    // }
 
     // tailor the output to the type of program being executed (server or client)
-    if (type == 1)
+    if (type)
     {
-        cout << "Save file to: ";
+        cout << "Save file to (default stdout): ";
     }
     else
     {
         cout << "File to be sent: ";
     }
-
     cin >> file;
 
-    if (type == 0)
+    if (file.empty() && type == 0)
     {
-        cout << "Pkt size: ";
-        cin >> pcktSize;
+        cout << "You must include an input file in client mode.";
+        exit(1);
+    }
+
+    if (!type)
+    {
+        // use a double here so if the input is less than 1 KB (decimal number) we can handle it. This will get rounded, but it'll be close
+        double packetInput;
+        cout << "Pkt size (KB): ";
+        cin >> packetInput;
+        // convert to KB
+        pcktSize = packetInput * 1000;
     }
 
     cout << "Enter encryption key: ";
     cin >> key;
 }
 
-void print_packet(char *buffer, int size, int packetNum, int type = 0)
+// helper function to print the packet details as hex. In verbose mode, it prints every item in the packet
+void print_packet(char *buffer, long long size)
 {
-    // type 1 for server and 0 for client
-    if (type == 1)
-    {
-        cout << "Sent ";
-    }
-    else
-    {
-        cout << "Rec ";
-    }
-    cout << "packet #" << packetNum << " - encrypted as ";
-
-    if (size <= 4)
+    // if verbose mode is set, then print out every item in the packet
+    if (g_verbose)
     {
         for (int i = 0; i < size; i++)
         {
-            cout << hex << buffer[i] << dec;
+            cout << hex << (int)buffer[i] << dec;
         }
-        cout << endl;
+    }
+    else if (size <= 4) // if the packets are small, just print them all out
+    {
+        for (int i = 0; i < size; i++)
+        {
+            cout << hex << (int)buffer[i] << dec;
+        }
     }
     else
     {
-        cout << hex << buffer[0] << buffer[1] << dec << "..." << hex << buffer[size - 2] << buffer[size - 1] << dec;
+        // just print the first 2 and last 2 items in the array
+        cout << hex << (int)buffer[0] << (int)buffer[1] << dec << "..." << hex << (int)buffer[size - 2] << (int)buffer[size - 1] << dec;
     }
+    cout << endl;
+    return;
 }
 
-void print_settings(string &key, sockaddr_in &servaddr, int &port, string &file, unsigned long &pcktSize, int type = 0)
-{
-    cout << "=====SETTINGS=====" << endl;
-    cout << "IP: " << servaddr.sin_addr.s_addr << endl;
-    cout << "Port: " << port << endl;
-    cout << "File: " << file << endl;
-    if (type == 0)
-    {
-        cout << "Packet Size: " << pcktSize << endl;
-    }
-
-    cout << "Encryption key: " << key << endl;
-}
-
+// handler for the client execution
 int client()
 {
+    // create the necessary variables for the client
     int port;
     unsigned long pcktSize;
     string ip;
@@ -161,45 +148,48 @@ int client()
     // socket variables
     int sockfd;
     struct sockaddr_in serv_addr;
+
+    // fill variables with user input
     get_user_input(key, ip, port, inFile, pcktSize);
-    print_settings(key, serv_addr, port, inFile, pcktSize);
-    // start the timing
-    auto start = high_resolution_clock::now();
+
     // get the file opeend and ready to send.
     FILE *inputFile;
     inputFile = fopen(inFile.c_str(), "r");
     if (inputFile == NULL)
     {
-        cout << "\033[1;31mError opening the file: " << inFile << "\033[1;0m" << endl;
+        cout << "\033[1;31mError opening the file: " << inFile << ". Make sure it exists and that you actually entered something.\033[1;0m" << endl;
         return 1;
     }
     // make sure our cursor is at the start of the file
     fseek(inputFile, 0, SEEK_SET);
 
-    // hardcode the port for now... will set this later in the settings
-
+    // configure the settings of the socket
     int sock = 0, valread;
     serv_addr.sin_family = AF_INET;
     serv_addr.sin_port = htons(port);
+
+    // check that the IP address of the server is a valid format for IP. Note: this does not check if there's something at that IP, it's only syntactical
     if (inet_pton(AF_INET, ip.c_str(), &serv_addr.sin_addr) <= 0)
     {
         cout << "Hmmm this ip doesn't looks right." << endl;
         exit(1);
     }
 
+    // create the socket object with the settings
     if ((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0)
     {
         cout << "There was a problem creating the socket." << endl;
         exit(1);
     }
 
+    // reach out and connect to the socket of the server
     if (connect(sock, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0)
     {
         cout << "Connection failed" << endl;
         exit(1);
     }
 
-    // let's see if we can get the size of the file so that we can see if the buffer is set larger than the actual file
+    // get the stats of the file to see if we can optimize the packet size.
     struct stat sb;
     if (stat(inFile.c_str(), &sb) == -1)
     {
@@ -211,36 +201,34 @@ int client()
         cout << "File size: " << (long long)sb.st_size << endl;
     }
 
-    // add one to the the input to account for our "end of packet" symbol which is a -1
+    // create the number for our buffer
     unsigned long buffer_size = pcktSize;
-    // now resize the buffer size to be the size of the file instead of what the user set
+    // if the file is smaller than the packet size set by the user, resize the buffer size to be the size of the file. This will be more efficient than whtat the user input was
     if ((unsigned long)sb.st_size < buffer_size)
     {
+        // let them know this is happening so they don't freak out
         cout << "It look like the packet size that you set (" << buffer_size << ") was bigger than the actual size (" << sb.st_size << ") of the file." << endl;
         buffer_size = (long)sb.st_size;
     }
 
+    // create the buffer with the added space for the size of the size metadata attached to each packet
     char buff[buffer_size + sizeof(unsigned long)];
 
-    cout << "Size of buffer: " << sizeof(buff) << endl;
-
+    // this is the totoal packets size that we will initially send to the server to make sure it's on the same page and ready to receive our payload
     unsigned long setPctSize = (unsigned long)sizeof(buff);
     // send to the server the size of the packets being sent
     send(sock, &setPctSize, sizeof(unsigned long), 0);
-    cout << "I'm gonna send " << sb.st_size / buffer_size << " packets over." << endl;
-    if (buffer_size > 65535)
-    {
-        cout << "\033[1;33mWarning: You set a very large packet size. You might see a different number of packets on the server size because of TCP packet size limitation. You'll still get all the data though.\033[1;0m" << endl;
-    }
-    uint32_t packetNum = 0;
-    cout << "Buffer size: " << sizeof(buff) << endl;
+    long long packetNum = 0;
     unsigned long readSize;
     while ((readSize = (unsigned long)fread(buff, sizeof(char), sizeof(buff) - sizeof(long), inputFile)) > 0)
     {
         // run the encryption on the buffer (this only needs to happen on the actual data that's read in so we set the size to be the size fo the read data)
         xor_crypt(key, buff, readSize);
+
+        // initialize the union for the metadata
         packetCap end;
         end.value = readSize;
+        // inject the bytes of the metadata into the payload
         for (int i = 0; i < sizeof(unsigned long); i++)
         {
             buff[sizeof(buff) - i - 1] = end.bytes[i];
@@ -248,25 +236,16 @@ int client()
         // send the data over the socket
         send(sock, buff, sizeof(buff), 0);
         // print out the sent packet
-        cout << "Sent encrypted packet #" << packetNum << " - Size: " << end.value << endl;
+        cout << "Sent encrypted packet #" << packetNum << " - encrypted as ";
+        print_packet(buff, readSize);
 
+        // increment the packet number counter to keep track of how many have been sent
         packetNum++;
     }
+    // clean up
     fclose(inputFile);
-
     cout << "Send Success!" << endl;
     run_md5(inFile);
-
-    auto stop = high_resolution_clock::now();
-
-    // Get duration. Substart timepoints to
-    // get durarion. To cast it to proper unit
-    // use duration cast method
-    auto duration = duration_cast<microseconds>(stop - start);
-
-    float fDuration = (float)duration.count();
-    cout << "Time taken by function: "
-         << (float)fDuration / 1000000 << " seconds" << endl;
     return 0;
 }
 
@@ -277,28 +256,22 @@ int server()
     string ip;
     string outFile;
     string key;
+    // this is a placeholder that does nothing because honestly I couldn't figure out optional parameters of objects...
     unsigned long placeholder;
 
     // socket variables
     int sockfd,
         new_socket;
     socklen_t len;
-    struct sockaddr_in servaddr, cliaddr, valread;
+    struct sockaddr_in servaddr, cliaddr;
 
-    cout << "Running as server." << endl;
+    // populate the settings from the user
     get_user_input(key, ip, port, outFile, placeholder, 1);
-    print_settings(key, servaddr, port, outFile, placeholder, 1);
-
-    cout << "Setting up the socket..." << endl;
 
     // create the fd for the socket
     sockfd = socket(AF_INET, SOCK_STREAM, 0);
-    // test IP address to make sure it's vaid
-    // if (inet_pton(AF_INET, ip.c_str(), &servaddr.sin_addr) <= 0)
-    // {
-    //     cout << "Hmmm this ip doesn't looks right." << endl;
-    //     exit(1);
-    // }
+
+    // error check for the socket setup
     if (sockfd < 0)
     {
         cout << "Setting up the socket failed." << endl;
@@ -309,10 +282,10 @@ int server()
     servaddr.sin_family = AF_INET;
     servaddr.sin_port = htons(port);
 
+    // since it's a server, we listen to any incoming connection
     servaddr.sin_addr.s_addr = INADDR_ANY;
-    cout << "binding on port: " << port << endl;
 
-    // bind the socket to the setting so that it can actually listen
+    // bind the socket to the setting so that it can actually listen (I couldn't for the life of me get this to work with error checking)
     bind(sockfd, (struct sockaddr *)&servaddr, sizeof(servaddr));
 
     // listen on the bound socket and accept a maxiumum of 5 concurrent connections
@@ -322,7 +295,9 @@ int server()
         exit(1);
     }
 
+    // now we're cookin with an incoming connection
     len = sizeof(cliaddr);
+    // transfer the incoming connection to a dedicated port
     new_socket = accept(sockfd, (struct sockaddr *)&cliaddr, &len);
 
     if (new_socket < 0)
@@ -330,39 +305,69 @@ int server()
         cout << "Server accept failed." << endl;
         exit(1);
     }
+    // this is a single element array that holds the initial setting send from the client that tells the server how big the incoming packets are going to be
     unsigned long packetSize[1] = {0};
     // get the packet size from the client
     read(new_socket, packetSize, sizeof(unsigned long));
-    cout << "Setting the size of the packets to: " << (long)packetSize[0] << endl;
-    FILE *fp;
-    fp = fopen(outFile.c_str(), "w");
-    u_int32_t pcktNum = 0;
-    char buffer[packetSize[0]];
 
+    // setup the file pointer for the output (it may not be used but is initialized to help the code further down)
+    FILE *fp;
+    // open the file for writing
+    if (outFile.length() != 0)
+    {
+
+        fp = fopen(outFile.c_str(), "w");
+    }
+
+    long long pcktNum = 0;      // counter for the number of incoming packets
+    char buffer[packetSize[0]]; // buffer to hold the incoming data (set to the size from the transmission from the client)
+
+    // continue reading until there's nothing left. What's tricky about this is that it will read in chunks the size of the packets,
+    // at the end of a transmission, the packet might not be full since there might be a smaller amount of data left than the packet size.
+    // This is why there is a unsigned long attached to the end that tells us how much real data is put into the packet. Looking back this isn't
+    // the best way to do this. The better way would be to have the number at the beginning and then malloc the size of the buffer to be only the
+    // size of the data, but since in this assignment we're using fixed packet sizes, this only happens at the end of the file (or once per transmission).
     while (read(new_socket, buffer, sizeof(buffer)))
     {
+        // to hold the data count
         packetCap output;
         // populate the union with the data
         for (int i = 0; i < sizeof(unsigned long); i++)
         {
+            // specifically access the end of the incoming packet for the metadata section
             output.bytes[i] = buffer[sizeof(buffer) - i - 1];
         }
 
-        cout << "Rec packet #" << pcktNum << " - Size: " << output.value << endl;
+        // print out the sent packet
+        cout << "Rec packet #" << pcktNum << " as ";
+        print_packet(buffer, output.value);
 
-        // encrypt the buffer with the key
+        // decrypt the buffer with the key
         xor_crypt(key, buffer, output.value);
-        // write the buffer to the file
-        fwrite(&buffer, output.value, 1, fp);
+
+        // only do this if there was a file set
+        if (outFile.length() != 0)
+        {
+            // write the buffer to the file
+            fwrite(&buffer, output.value, 1, fp);
+        }
 
         // increment the packet counter
         pcktNum++;
     }
+
+    // clean up
+    cout << "Receive Success!" << endl;
     fclose(fp);
-
     close(sockfd);
-
-    run_md5(outFile);
+    if (outFile.length() != 0)
+    {
+        run_md5(outFile);
+    }
+    else
+    {
+        cout << "No md5 sum since results were not saved..." << endl;
+    }
 
     return 0;
 }
@@ -370,8 +375,6 @@ int server()
 // handle the intial setup
 int main(int argc, char *argv[])
 {
-    cout << sizeof(unsigned long) << endl;
-
     // check to see the number of args. It should be over 2 or 3
     if (argc <= 1)
     {
@@ -386,6 +389,7 @@ int main(int argc, char *argv[])
     {
         if (strcmp(argv[2], "-v") == 0 | strcmp(argv[2], "--verbose") == 0)
         {
+            // this is a global variable because it is used a in a couple distributed areas
             g_verbose = 1;
         }
         else

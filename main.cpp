@@ -66,7 +66,6 @@ void xor_crypt(const string &key, char *data, int size)
     {
         data[i] ^= key[i % key.size()];
     }
-    cout << endl;
 }
 
 // function to help interacting with the user. Type is the client/server, default (client) is 0. Set 1 for server mode

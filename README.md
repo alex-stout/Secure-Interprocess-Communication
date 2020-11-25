@@ -1,4 +1,6 @@
-# Lab 2 - 252
+# Secure Inter-process Communication (IPC)
+
+Implementation of secure (encrypted) communication of file transfers between a client and server using TCP socket streams.
 
 ## Instructions
 
